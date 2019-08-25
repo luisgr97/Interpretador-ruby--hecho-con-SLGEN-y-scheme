@@ -1,0 +1,64 @@
+*************************************************
+*PRUEBAS PROYECTO RUBY PARTE 1: RUBY SIN OBJETOS*
+*Autrores: Luis Alberto Gómez                   *                       
+*          Camilo Sanchez Barreiro              *                   
+*Codigos:  1524932-3743                         *                   
+*          152-----3743                         *        
+*                                               *
+*************************************************
+ [12 pts] Operaciones:
+           1. Pruebas Operaciones Aritmeticas: 
+                  1.1 ruby puts(5+(8/(4+5))); end --> 5(8/9)
+                  1.2 ruby puts(5*(4- 2)); end --> 10
+                  1.3 ruby puts((​1 +(​2+3))+4); end --> 10
+                  1.4 ruby puts(2**((4/2)+(5 - 3))); end --> 16
+                  1.5 ruby puts(10 % -3); end --> -2
+           2. Pruebas Opeaciones con Strings:
+                  2.1 ruby puts("hola"+" mundo"); end --> "hola mundo"
+                  2.2 ruby puts(" ganara FLP "*5); end --> " ganara FLP  ganara FLP  ganara FLP  ganara FLP  ganara FLP "
+                  2.3 ruby puts("hola"+(5*"n1")); end --> "holan1n1n1n1n1"
+                  2.4 ruby puts("hola"+(" mucho"+" Gusto")); end --> "hola mucho Gusto"
+                  2.5 ruby puts("no mas pruebas"*4); end --> "no mas pruebasno mas pruebasno mas pruebasno mas pruebas"
+           3. Pruebas Operaciones con Arrays:
+                  3.1
+                  3.2-----por hacer-------
+                  3.3
+                  3.4
+                  3.5
+            4. Pruebas Operaciones Invalidas: 
+                  4.1ruby puts("sss"+2); end --> "String can’t be coerced into Integer"
+                  4.2
+                  4.3
+                  4.5
+            5. Pruebas Operaciones Booleanas: 
+                  5.1
+                  5.2
+                  5.3
+                  5.4
+                  5.5
+ [13 pts] Declare:
+           1. Pruebas Declare:
+                 1.1
+                 1.2
+                 1.3
+                 1.4
+                 1.5
+                 1.6
+                 1.7
+                 1.8
+                 1.9
+                 1.10
+ [20 pts] Expresión simple:
+           1. Pruebas Expresión simple:
+                 1.1
+                 1.2
+                 1.3
+                 1.4
+                 1.5
+                 1.6
+                 1.7
+                 1.8
+                 1.9
+                 1.10
+
+

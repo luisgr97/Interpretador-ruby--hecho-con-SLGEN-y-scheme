@@ -1,0 +1,749 @@
+#lang eopl
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;Autor:  Luis Alberto Gómez, Camilo Sanchez Barreiro         ;;
+;;Codigo: 1524932-3743, 15------3743                          ;;
+;;Version: 1.0                                                ;;
+;;Contrato: (ruby-program) --> valores o expresiones          ;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(require racket/string); string-trim
+(require racket/list)
+
+;Definición de la Especificación Léxica:
+(define lexical-spec
+'((white-sp (whitespace) skip)
+  (comment ("#" (arbno (not #\newline))) skip)
+  (identifier ((arbno "@") letter (arbno (or letter digit "_" "?" "=" ))) symbol)
+  (number (digit (arbno digit)) number)
+  (number ("-" digit (arbno digit)) number)
+  (text ("\"" (or letter whitespace)
+              (arbno (or letter digit whitespace ":" "?" "=" "'")) "\"") string)))
+;------------------------------------------------------------------------------------------------------------------------------------
+;Definición de la Especificación Grámatica:
+(define grammar-spec
+  '( ;;Representa un programa de ruby     
+     (ruby-program ("ruby" exp-batch "end") a-program)
+     ;;Exp-batch: Representa una cerradura de expresiones
+     (exp-batch (expression (arbno expression)) a-batch)
+     ;;Expresión:
+     (expression (simple-exp) a-simple-exp)
+     ;Declare-exp: al menos uno o más identificadores (deben inicializarse en 'nil)
+     (expression ("declare" identifier (arbno "," identifier) ";") declare-exp)
+     ;Puts-exp: al menos un valor compuesto para imprimir
+     (expression ("puts" (separated-list comp-value ",") ";") puts-exp)
+     ;if-exp: un comp-value un conjunto de declaraciones then seguido de una exp-batch y la expresion else
+     (expression ("if" comp-value (arbno "then") exp-batch
+                       (arbno "elsif" comp-value (arbno "then") exp-batch)
+                       (arbno "else" exp-batch) "end") if-exp)
+   
+     (expression ("unless" comp-value (arbno "then")
+                           exp-batch
+                           (arbno "else" exp-batch) "end") unless-exp)
+
+     (expression ("while" comp-value (arbno "do") exp-batch "end") while-exp)
+     (expression ("until" comp-value (arbno "do") exp-batch "end") until-exp)
+
+     (expression ("for" identifier "in" comp-value (arbno "do") exp-batch "end") for-exp)
+
+     (expression ("def" identifier "(" (separated-list identifier ",") ")"
+                  exp-batch                  
+                  "end") function-exp)
+     (expression ("return" comp-value ";") return-exp)
+
+     ;;Expresión simple
+     (simple-exp (simple-value complement ";") val-exp)
+     
+     ;;Complemento
+     (complement ("=" comp-value calls) assign)
+     (complement (assign-op comp-value calls) assign-and)
+     (complement (calls) comp-calls)
+
+     ;;Calls
+     ;; 0 o muchas llamadas
+     (calls ((arbno call)) some-calls)
+
+     ;;Call
+     (call (arguments) arguments-call)
+     ;; (call ("." identifier arguments) a-method-call) ;; Parte 2: Ruby con Objetos
+
+     ;;Argumentos
+     ;; llamar una función puede tener 0 argumentos o muchos
+     (arguments ("(" (separated-list comp-value ",") ")") some-arguments)
+     ;; almenos 1 argumento para llamar acceder a un elemento en un arreglo
+     ;; máximo 2, ejemplo: a=[1,2,3]; a[1] #output 2; a[1,2] #output [2,3];
+     ;;                    a[1,2,3] #output Error
+     (arguments ("[" comp-value (arbno "," comp-value) "]") arr-arguments)
+
+     ;;Valores compuestos
+     (comp-value (value) a-value)
+     (comp-value (un-op comp-value) unop-value)
+     
+     (value (simple-value) a-s-val)
+     (value ("(" comp-value val-compl ")") compl-val)
+
+     ;;Complemento para valores
+     ;; llamadas a un valor:
+     ;; Ejemplo: sirve para ("hola"+(mundo())) donde mundo() retorna "mundo"
+     (val-compl (calls) val-call) 
+     ;; operacion inorden con otro valor
+     (val-compl (bin-op comp-value) binop-val)
+
+     ;; Valores simples
+     (simple-value (identifier) id-val)
+     (simple-value (number) num-val)
+     (simple-value (text) str-val) ;; recordar hacer string-trim cuando se evalue
+     (simple-value ("true") true-val)
+     (simple-value ("false") false-val)
+     (simple-value ("nil") nil-val)
+     ;; arreglo con 0 o muchos valores
+     (simple-value ("["(separated-list comp-value ",")"]") arr-val)
+     
+     ;;Operacion Inorden
+     (bin-op ("+") add)
+     (bin-op ("-") diff)
+     (bin-op ("*") mult)
+     (bin-op ("/") div)
+     (bin-op ("%") mod)
+     (bin-op ("**") pow)
+     (bin-op (">") great)
+     (bin-op (">=") great-eq)
+     (bin-op ("<") less)
+     (bin-op ("<=") less-eq)
+     (bin-op ("==") equal)
+     (bin-op ("!=") not-equal)
+     (bin-op ("and") and-op)
+     (bin-op ("&&") and-op)
+     (bin-op ("or") or-op)
+     (bin-op ("||") or-op)
+     ;;Rangos:
+     ;; Solo admite 2 argumentos, no se puede operar más de 1 vez
+     ;;Inclusivo: va hasta el limite superior
+     (bin-op ("..") in-range)
+     ;;Exclusivo: va hasta un step antes del limite superior
+     (bin-op ("...") ex-range)
+     ;; Ejemplo: (1..5) => (1 2 3 4 5)
+     ;; Ejemplo: (1...5) => (1 2 3 4)
+     ;; Ejemplo: ((1..5) .. 6) => Error
+     (bin-op ("step") st-range)
+     ;; Ejemplo: ((1..5) step 2) => (1 3 5)
+     ;; Ejemplo: ((1..5) step -1) => Error
+     ;; Ejemplo: ((-1..-5) step -2) => (-1 -3 -5)
+     ;; Ejemplo: ((1..-5) step 2) => Error
+     ;;Operación asignación
+     (assign-op ("+=") add-eq)
+     (assign-op ("-=") diff-eq)
+     (assign-op ("*=") mult-eq)
+     (assign-op ("/=") div-eq)
+     (assign-op ("**=") pow-eq)
+     ;;Operación unitaria
+     (un-op ("not") not-op)
+     (un-op ("!") not-op)))
+;------------------------------------------------------------------------------------------------------------------------------------
+;Construye los Datatypes necesarios automáticamente:
+(sllgen:make-define-datatypes lexical-spec grammar-spec)
+(define show-the-datatypes
+  (lambda () (sllgen:list-define-datatypes lexical-spec grammar-spec)))
+;-----------------------------------------------------------------------------------------------------------------------------------
+;El FrontEnd (Análisis léxico (scanner) y sintáctico (parser) integrados)
+(define scan&parse
+  (sllgen:make-string-parser lexical-spec grammar-spec))
+;El Analizador Léxico (Scanner)
+(define scan
+  (sllgen:make-string-scanner lexical-spec grammar-spec))
+;El Interpretador (FrontEnd + Evaluación + señal para lectura )
+(define Ruby-interpreter
+  (sllgen:make-rep-loop  "($Ruby-Program)"
+    (lambda (pgm) (eval-program pgm)) 
+    (sllgen:make-stream-parser 
+      lexical-spec
+      grammar-spec)))
+;------------------------------------------------------------------------------------------------------------------------------------
+;Define el tipo de los procedimientos Procedimientos
+(define-datatype procval procval?
+  (closure
+   (ids (list-of symbol?))
+   (body exp-batch?)
+   (env environment?)))
+
+;apply-procedure: evalua el cuerpo de un procedimientos en el ambiente extendido correspondiente
+(define apply-procedure
+  (lambda (proc args env)
+    (cases procval proc
+      (closure (ids body env)
+               '(eval-exp-batch body (extend-env ids args env))))))
+;----------------------------------------------------------------------------------------------------------------------------------
+;Define las Funciones de Evaluacion:
+
+;Eval-Program --> ruby-program
+(define (eval-program pgm)
+  (cases ruby-program pgm
+    (a-program (a-batch)
+               (eval-exp-batch a-batch (empty-env)))))
+
+
+;Eval-exp-batch --> batch env
+(define (eval-exp-batch batch env)
+  (cases exp-batch batch
+    (a-batch (exp exps)
+             (eval-expressions exp exps env))))
+
+;------------------------------------------Eval Expression------------------------------------------------------------------
+;define eval-expressions
+(define (eval-expressions exp exps env)
+  (cases expression exp
+    ;simple-exp
+    (a-simple-exp (simple-exp)
+                  (eval-simple-exps simple-exp env))
+    ;declare-exp
+    (declare-exp (id idss)(if (null? exps)
+                                (nil-val)
+                                (let ([args (build-list-nill (+ 1 (length idss)) (nil-val))])
+                                     (eval-rands exps (extend-env (cons id idss) args env)))))
+    ;puts-exp
+    (puts-exp (values)
+              (for-each (lambda (val) (eopl:pretty-print val))
+                        (map (lambda (val) (eval-comp-value val env)) values)))  
+    ;if-exp
+    (if-exp (c-exp c-exp-then elseif-exp elseif-then else-then)
+            (begin
+              (if (eqv? 'true (eval-comp-value c-exp env))
+                     (eval-exp-batch c-exp-then env)
+                     (if (null? elseif-exp)
+                          (eval-else elseif-then env)
+                          (eval-elsifs elseif-exp elseif-then else-then env)))
+              'nill))
+    ;unless-exp
+    (unless-exp (c-exp c-exp-then else-then)
+                                      (begin
+                                        (if (eqv? 'true (eval-comp-value c-exp env))
+                                          (eval-else else-then env)
+                                          (eval-exp-batch c-exp-then env))
+                                        'nil))
+                                    
+    ;while-exp
+     (while-exp (c-value a-exp-batch)
+                (eval-while-exp c-value a-exp-batch env))
+          ;until-exp
+    ;for-exp
+    (for-exp (id comp batch)
+             (ciclo (eval-range(eval-comp-value comp env)) id batch (extend-env (list id) (build-list-nill 1 (nil-val)) env))
+                                     )
+    ;function-exp
+    ;return-exp
+    (return-exp (a-comp-value) "")
+    (else "TO DO")))
+
+(define ciclo
+  (lambda (lista id batch env)
+    (cond
+      [(null? (cdr lista))
+       (begin
+         (setref!
+          (apply-env-ref env id)
+          (car lista))
+         (eval-exp-batch batch env)
+         )
+       ]
+      [else
+       (begin
+         (setref!
+          (apply-env-ref env id)
+          (car lista))
+         (eval-exp-batch batch env)
+         (ciclo (cdr lista) id batch env))]
+      )
+    )
+  )
+;----------------------------------------------Simple Value--------------------------------------------------------------
+
+; eval-simple-value s-val env (cases simple-value s-val (id-val ...) (num-val ...) (true-val ...))
+(define (eval-simple-value s-val env)
+           (cases simple-value s-val
+             (id-val (identifier) (apply-env env identifier))
+             (num-val (number) number)
+             (str-val (text) (cleaner-strings text))
+             (true-val () s-val)
+             (false-val () s-val)
+             (nil-val () s-val)
+             (arr-val (vals) (map (lambda (lval)
+                                    (eval-comp-value lval env)) vals))
+             (else eopl:error "it'snt simple value")))
+
+;--------------------------------------Eval Comp-Value--------------------------------------------
+
+; eval-comp-value c-value env => (cases comp-value c-value (a-value ...) (unop-value ...))
+(define (eval-comp-value c-value env)
+        (cases comp-value c-value
+          (a-value (value)
+                   (eval-value value env))
+          (unop-value (un-op val)
+                      ((eval-un-op un-op) (eval-comp-value val env)))
+          (else 'nill)))
+
+;-------------------------------------------Eval Value---------------------------------------------
+
+; eval-value a-value env => (cases value a-value (simple-val ...) (compl-val ...))
+;                          a-val-compl (c-val es un comp-value, a-val-compl es un val-compl)
+(define eval-value (lambda (a-val env)
+                     (cases value a-val
+                       (a-s-val (s-val)
+                                (eval-simple-value s-val env))
+                       (compl-val (comp-value val-compl) (eval-val-compl (eval-comp-value comp-value env) val-compl env))
+                       (else "nill"))))
+
+;------------------------------------------Eval Val Complement----------------------------------------
+
+; eval-val-compl a-val a-val-compl env => (cases val-compl a-val-compl (val-call ...) (binop-val ...))
+(define (eval-val-compl a-val a-val-compl env)
+          (cases val-compl a-val-compl
+            (val-call (calls)
+                      calls)
+            (binop-val (bin-op comp-value)
+                        (cond ;operaciones con números:
+                              [(and(number? (eval-comp-value comp-value env))(number? a-val))
+                                   ((eval-bin-op bin-op) a-val (eval-comp-value comp-value env))]
+                               ;operaciones con string:
+                              [(and(string? (eval-comp-value comp-value env))(string? a-val)(eqv? "+" (bring-symbol-bin-op bin-op)))
+                                (concatenar a-val (eval-comp-value comp-value env))]
+                              [(and(number? (eval-comp-value comp-value env))(string? a-val)(eqv? "*" (bring-symbol-bin-op bin-op)))
+                               (multiplicar-cadena a-val (eval-comp-value comp-value env) "")]
+                              [(and(string? (eval-comp-value comp-value env))(number? a-val)(eqv? "*" (bring-symbol-bin-op bin-op)))
+                               (multiplicar-cadena (eval-comp-value comp-value env) a-val "")]
+                              [(and(string? (eval-comp-value comp-value env))(number? a-val)(eqv? "+" (bring-symbol-bin-op bin-op)))
+                               eopl:error "No implicit conversion of Integer into String"]
+                              [(and(number? (eval-comp-value comp-value env))(string? a-val)(eqv? "+" (bring-symbol-bin-op bin-op)))
+                               eopl:error "String can’t be coerced into Integer"]
+                              ;operaciones con bool:
+                              [(and (es-bool? (eval-comp-value comp-value env))(number? a-val))
+                               eopl:error "Not defined method <bin-op> for boolean"]
+                              ;bool-and:
+                              [(and (symbol? (eval-comp-value comp-value env))(symbol? a-val)(eqv? "and" (bring-symbol-bin-op bin-op)))
+                               (interpretar-Simbol-Bool a-val (eval-comp-value comp-value env))]
+                              [(and (symbol? (eval-comp-value comp-value env))(es-bool? a-val)(eqv? "and" (bring-symbol-bin-op bin-op)))
+                               (interpretar-Simbol-Bool (extraer-valor-true-o-false a-val) (eval-comp-value comp-value env))]
+                              [(and (es-bool? (eval-comp-value comp-value env))(symbol? a-val)(eqv? "and" (bring-symbol-bin-op bin-op)))
+                               (interpretar-Simbol-Bool a-val (extraer-valor-true-o-false  (eval-comp-value comp-value env)))]
+                              [(and (es-bool? (eval-comp-value comp-value env))(es-bool? a-val)(eqv? "and" (bring-symbol-bin-op bin-op)))
+                               (interpretar-Simbol-Bool (extraer-valor-true-o-false a-val) (extraer-valor-true-o-false (eval-comp-value comp-value env)))] 
+                             ;bool-or:
+                              [(and (symbol? (eval-comp-value comp-value env))(symbol? a-val)(eqv? "or" (bring-symbol-bin-op bin-op)))
+                               (interpretar-Simbol-Bool2 a-val (eval-comp-value comp-value env))]
+                              [(and (es-bool? (eval-comp-value comp-value env))(es-bool? a-val)(eqv? "or" (bring-symbol-bin-op bin-op)))
+                               (interpretar-Simbol-Bool2 (extraer-valor-true-o-false a-val) (extraer-valor-true-o-false (eval-comp-value comp-value env)))]
+                              [(and (symbol? (eval-comp-value comp-value env))(es-bool? a-val)(eqv? "or" (bring-symbol-bin-op bin-op)))
+                               (interpretar-Simbol-Bool2 a-val (extraer-valor-true-o-false (eval-comp-value comp-value env)))]
+                              [(and (es-bool? (eval-comp-value comp-value env))(symbol? a-val)(eqv? "or" (bring-symbol-bin-op bin-op)))
+                               (interpretar-Simbol-Bool2 (extraer-valor-true-o-false a-val) (eval-comp-value comp-value env))]
+                              [(and (list? (eval-comp-value comp-value env))(list? a-val)(eqv? "+" (bring-symbol-bin-op bin-op)))
+                               (eval-arr-val a-val (eval-comp-value comp-value env))]
+                              [(and (number? (eval-comp-value comp-value env))(list? a-val)(eqv? "*" (bring-symbol-bin-op bin-op)))
+                               (append (dubplica-arr-val a-val (eval-comp-value comp-value env)))]
+                              ;else:
+                              [else eopl:error "It's type of operation is not available"]))))
+
+
+;---------------------------------------Eval Arguments--------------------------------------------------------------
+
+;eval-arguments => (list comp-value)
+(define (eval-arguments  c-values)
+         (cases arguments c-values
+           (some-arguments (args) (cond[(and (list? args) (not(null? args)))
+                                      (begin
+                                        (eval-comp-value (car args))
+                                        (eval-arguments (cdr args)))]))
+           ;(arr-arguments ...)
+           (else eopl:error "It'snt a Argument")))
+
+;--------------------------------------Eval Call-----------------------------------------------------------------
+
+;eval-call
+(define (eval-call arguments)(cases call arguments
+                              (arguments-call (arguments) (eval-arguments arguments))
+                              (else "It'snt a Call")))
+
+;Eval-calls
+(define (eval-calls arguments)(cases calls arguments
+                                (some-calls (a-l-call) (cond [(and (list? a-l-call) (not(null? a-l-call)))
+                                                               (begin
+                                                                 (eval-call (car a-l-call))
+                                                                 (eval-calls (cdr a-l-call)))]))
+                                (else "It'snt a list of Calls")))
+
+;------------------------------------------------Define Eval Simple-Expression-------------------------------
+
+;Define eval-simple-exps (sim-exp env)--> evalua una expresion simple
+(define (eval-simple-exps sim-exp env)
+          (cases simple-exp sim-exp
+            (val-exp (s-val c-val)
+                     (eval-complement-exps s-val c-val env))
+            (else eopl:error "It'snt a Simple-Expression")))
+
+
+
+;Define eval-complement-exps (s-val c-val env)--> evalua una expression complemento
+(define (eval-complement-exps s-val c-val env)
+             (cases complement c-val
+               (assign (a-comp-value call-list)
+                       (setref! (apply-env-ref env (bring-ids s-val env))
+                                (eval-comp-value a-comp-value env)))
+               (assign-and (an-op a-comp-value calls)
+                           (setref! (apply-env-ref env (bring-ids s-val env))
+                                ((eval-un-op an-op) (eval-comp-value c-val env))))
+               (else (nil-val))))
+
+
+;----------------------------------------------------eval-declare-exp-------------------------------------------
+; prueba -- > ruby declare x, y, z, w; x = 1; y = 9; z = 4; w = ((z+(x*(y+1)))/2); puts w; end --> 7
+
+;-----------------------------------------------------------------------------------------------------------------------------------
+;Define los metodos para aplicar las primitivas
+
+;Define eval-un-nop para evaluar las operaciones un-op
+(define
+  (eval-un-op unop)
+  (cases un-op unop
+    (not-op () unop)
+    (else eopl:error "It'snt a UnOp")))
+
+;Define eval-bin-op, evalua el tipo de bin-op y me retorna la operacion,
+;para ejecutarla sobre los args
+(define 
+  (eval-bin-op binop)
+    (cases bin-op binop
+      (add () +)
+      (diff () -)
+      (mult () *)
+      (div () /)
+      (mod () (lambda (x1 x2)
+                       (modulo x1 x2)))
+      (pow () (lambda (x1 x2)
+                       (expt x1 x2)))
+      (equal () (lambda (x1 x2)
+                  (if (eqv? x1 x2)
+                        (extraer-valor-true-o-false (true-val))
+                        (extraer-valor-true-o-false (false-val))))) 
+      (great () (lambda (x1 x2)
+                        (if (> x1 x2)
+                             (extraer-valor-true-o-false (true-val))
+                             (extraer-valor-true-o-false (false-val)))))
+      (great-eq () (lambda (x1 x2)
+                        (if (>= x1 x2)
+                             (extraer-valor-true-o-false (true-val))
+                             (extraer-valor-true-o-false (false-val)))))
+      (less () (lambda (x1 x2)
+                        (if (< x1 x2)
+                             (extraer-valor-true-o-false (true-val))
+                             (extraer-valor-true-o-false (false-val)))))
+      (less-eq () (lambda (x1 x2)
+                        (if (<= x1 x2)
+                             (extraer-valor-true-o-false (true-val))
+                             (extraer-valor-true-o-false (false-val)))))
+      (and-op () (lambda (x1 x2)
+                        (interpretar-Simbol-Bool x1 x2)))
+      (or-op () (lambda (x1 x2)
+                        (interpretar-Simbol-Bool2 x1 x2)))
+      (not-equal () (lambda (x1 x2)
+                        (if (not(eqv? x1 x2))
+                             (extraer-valor-true-o-false (true-val))
+                             (extraer-valor-true-o-false (false-val)))))
+      (in-range () inclusive-loop)
+      (ex-range () exclusive-loop)
+      (st-range () step-loop)
+      (else eopl:error "It'snt a Bin-Op")
+      ))
+
+;-----------------------------------------------------------------------------------------------------------------------------------
+;Define paso por Referencias:
+
+;Tipo de dato Referencia:
+(define-datatype reference reference?
+  (a-ref (position integer?)
+         (vec vector?)))
+
+;Define metodo deref
+(define deref
+  (lambda (ref)
+    (primitive-deref ref)))
+;Define  primitive-ref
+(define primitive-deref
+  (lambda (ref)
+    (cases reference ref
+      (a-ref (pos vec)
+             (vector-ref vec pos)))))
+;Define setref
+(define setref!
+  (lambda (ref val)
+    (primitive-setref! ref val)))
+;define primitve-setref
+(define primitive-setref!
+  (lambda (ref val)
+    (cases reference ref
+      (a-ref (pos vec)
+             (vector-set! vec pos val)))))
+;-------------------------------------------------------------------------------------------------------------------------------------
+;Ambientes
+
+;definición del tipo de dato ambiente
+(define-datatype environment environment?
+  (empty-env-record)
+  (extended-env-record
+   (syms (list-of symbol?))
+   (vec  vector?)
+   (env environment?)))
+
+(define scheme-value? (lambda (v) #t))
+
+;empty-env:      -> enviroment
+;función que crea un ambiente vacío
+(define empty-env  
+  (lambda ()
+    (empty-env-record)))       ;llamado al constructor de ambiente vacío 
+
+
+;extend-env: <list-of symbols> <list-of numbers> enviroment -> enviroment
+;función que crea un ambiente extendido
+(define extend-env
+  (lambda (syms vals env)
+    (extended-env-record syms (list->vector vals) env)))
+
+;extend-env-recursively: <list-of symbols> <list-of <list-of symbols>> <list-of expressions> environment -> environment
+;función que crea un ambiente extendido para procedimientos recursivos
+(define extend-env-recursively
+  (lambda (proc-names idss bodies old-env)
+    (let ((len (length proc-names)))
+      (let ((vec (make-vector len)))
+        (let ((env (extended-env-record proc-names vec old-env)))
+          (for-each
+            (lambda (pos ids body)
+              (vector-set! vec pos (closure ids body env)))
+            (iota len) idss bodies)
+          env)))))
+
+;Ambiente recursivo para un solo procedimiento
+(define (a-recursive-env a-proc-name ids body env)
+  (let ((vec (make-vector 1)))
+    (let ((env (extended-env-record (list a-proc-name) vec env)))
+          (vector-set! vec 0 (closure ids body env))
+          env)))
+
+;iota: number -> list
+;función que retorna una lista de los números desde 0 hasta end
+(define iota
+  (lambda (end)
+    (let loop ((next 0))
+      (if (>= next end) '()
+        (cons next (loop (+ 1 next)))))))
+
+;función que busca un símbolo en un ambiente
+(define apply-env
+  (lambda (env sym)
+    (deref (apply-env-ref env sym))))
+(define apply-env-ref
+  (lambda (env sym)
+    (cases environment env
+      (empty-env-record ()
+                        (eopl:error 'Error "undefined local variable or method ~s" sym))
+      (extended-env-record (syms vals env)
+                           (let ((pos (rib-find-position sym syms)))
+                             (if (number? pos)
+                                 (a-ref pos vals)
+                                 (apply-env-ref env sym)))))))
+
+;Ambiente inicial
+(define (init-env) (empty-env))
+;--------------------------------------------------------------------------------------------------------------------------------------
+;Rangos
+
+;define tipo de Dato Rango
+(define-datatype range range?
+  (inclusive (start number?) (end number?) (step number?))
+  (exclusive (start number?) (end number?) (step number?))
+  )
+
+(define (eval-range a-range)
+  (cases range a-range
+    (inclusive (start end step) (iota-range start end step))
+    (exclusive (start end step) (iota-range start (- end 1) step))
+    )
+  )
+
+(define inclusive-loop
+  (lambda (start end)(inclusive  start end 1))
+  )
+
+(define exclusive-loop
+  (lambda (start end)(exclusive start end 1))
+  )
+(define step-loop
+  (lambda (a-loop a-step)
+    (cases range a-loop
+      (inclusive (start end step) (inclusive start end a-step))
+      (exclusive (start end step) (exclusive start (- end 1) a-step))
+      )
+    )
+  )
+
+;;Función que retorna una lista dado un inicio, un final, y un incremento 
+(define iota-range
+  (lambda (start end step)
+    (cond [(or
+            (and (< start end) (> 0 step))
+            (and (> start end) (< 0 step)))
+           (eopl:error 'Step "bad step")]
+          [else
+           (let loop ((next start))
+             (if (= 0 (abs (- next end)))
+                 (list next)
+                 (cons next (loop (+ next step)))))]
+          )
+    ))
+;-----------------------------------------------------------------------------------------------------------------------------------
+;Funciones Auxiliares
+
+; funciones auxiliares para encontrar la posición de un símbolo en la lista de símbolos de un ambiente
+(define rib-find-position 
+  (lambda (sym los)
+    (list-find-position sym los)))
+
+(define list-find-position
+  (lambda (sym los)
+    (list-index (lambda (sym1) (eqv? sym1 sym)) los)))
+
+(define list-index
+  (lambda (pred ls)
+    (cond
+      ((null? ls) #f)
+      ((pred (car ls)) 0)
+      (else (let ((list-index-r (list-index pred (cdr ls))))
+              (if (number? list-index-r)
+                (+ list-index-r 1)
+                #f))))))
+; Funcion auxiliar para darle un valor simbolico al tipo de dato true y false
+(define extraer-valor-true-o-false (lambda (valor)
+                                           (cond[(simple-value? valor)
+                                                  (cases simple-value valor
+                                                    (true-val () 'true )
+                                                    (false-val () 'false)
+                                                    (else "It'sn a true or false value"))])))
+
+
+;funcion auxliar para saber si es un datatype bool definido por ruby
+(define es-bool? (lambda (type-bool)
+                           (cond[(simple-value? type-bool)
+                                                  (cases simple-value type-bool
+                                                    (true-val () #t )
+                                                    (false-val () #t)
+                                                    (else "It'sn a t or f value"))])))
+
+;funcion cleaner-strings (str) ---> recibe un string de tipo "\string\" y devuelve "string"
+;su proposito es limpiar los string para que sean mas esteticos 
+(define cleaner-strings (lambda (str)
+                            (substring str 1 (- (string-length str) 1))))
+
+;Funcion auxliar para interpretar booleanos con and:
+(define interpretar-Simbol-Bool (lambda (b1 b2)
+                                        (cond[(and(eqv? b1 'true)(eqv? b2 'true))'true]
+                                             [(and(eqv? b1 'true)(eqv? b2 'false))'false]
+                                             [(and(eqv? b1 'false)(eqv? b2 'true))'false]
+                                             [(and(eqv? b1 'false)(eqv? b2 'false))'false])))
+;Funcion auxiar para interpretar booleanos con or:
+(define interpretar-Simbol-Bool2 (lambda (b1 b2)
+                                        (cond[(or(eqv? b1 'true)(eqv? b2 'true))'true]
+                                             [(or(eqv? b1 'true)(eqv? b2 'false))'true]
+                                             [(or(eqv? b1 'false)(eqv? b2 'true))'true]
+                                             [(or(eqv? b1 'false)(eqv? b2 'false))'false])))
+
+; Funcion auxiliar bring-symbol-bin-op (sym-bin-op) --> recibe un tipo de dato bin-op
+; y retorna el string que representa la operacion, para poder determinar que es lo que
+; se quiere hacer, con que tipo de datos y ver si es una operacion permitida o no por
+;el lenguaje.
+(define bring-symbol-bin-op (lambda (sym-bin-op)
+                                      (cases bin-op sym-bin-op
+                                       (add () "+")
+                                       (or-op () "or") 
+                                       (mult () "*")
+                                       (pow  () "pow")
+                                       (and-op () "and")
+                                       (else "nill"))))
+;funcion auxiliar concatenar(s1 s2) recibe 2 string y sirve para concatenarlos
+(define concatenar (lambda (s1 s2)
+                        (let ([x (string-append s1 s2)]) x)))
+;funcion auxiliar multiplicar-cadena (str n result) recibe un string un numero y una variable para guardar resultado
+;sirve para multipliacar una cadena de texto.
+(define multiplicar-cadena (lambda (str n result)
+                               (if (> n 0) 
+                                   (multiplicar-cadena str (- n 1) (concatenar result (string-copy str)))
+                                              result)))
+
+;Funcion auxiliar para elevar potencias
+(define pown (lambda (x1 x2)
+                     (let ([result (expt x1 x2)])
+                       result)))
+
+;Define brings-ids (s-val env) recibe un simple value y el ambiente --> me trae el indentificador de un valor simple
+(define (bring-ids s-val env)
+            (cases simple-value s-val
+            (id-val (identifier) identifier)
+            (else eopl:error "It'snt a ID")))
+
+; funcion auxiliar para operar la concatenacion de arrays de ruby
+(define eval-arr-val (lambda (e1 e2)
+                      (append e1 e2)))
+; funcion auxiliar para multiplicar una cadena en ruby
+(define dubplica-arr-val (lambda (arr n)
+                                  (make-list n arr)))
+
+;Funcion auxiliar que evalua un else
+(define eval-else
+  (lambda (e-then env)
+    (if (null? e-then)
+         'nil
+         (eval-exp-batch (car e-then) env))))
+
+;Funcion auxiliar que evalua los elfs-if y sus cuerpos 
+(define eval-elsifs
+  (lambda (l-exp l-then else-then env)
+    (cond
+      ;valida la condicion del primer elseif o unico de no tener varios
+      [(eqv? 'true (eval-comp-value (car l-exp) env))
+       (eval-exp-batch (car l-then) env)]
+      ; evalua que si tengo elseifs, cumplan la condiciones.
+      ; de hacerlo las evalua, de no cumplir con la evaluación, llama al else.
+      [(null? (cdr l-exp))
+              (if (eqv? 'true (eval-comp-value (car l-exp) env))
+                                (eval-exp-batch (car l-then) env)
+                                (eval-else else-then env))]
+      ;si tengo mas de un elseif, hace el llamado recursivo con el resto de la lista
+      [else (eval-elsifs (cdr l-exp) (cdr l-then) else-then env)])))
+
+
+;funcion auxiliar para evaluar un while expresion
+(define eval-while-exp (lambda (c-value a-exp-batch env)
+                         (stop? c-value a-exp-batch a-exp-batch env)))
+(define stop? (lambda (c-value a-exp-batch exp env)
+                    (if (eqv? 'true (eval-comp-value c-value env))
+                                             (begin
+                                             (eval-exp-batch a-exp-batch env)
+                                             (stop? c-value a-exp-batch exp env))
+                                             (nil-val))))
+
+
+; funciones auxiliares para aplicar eval-expression a cada elemento de una 
+; lista de operandos (expresiones)
+(define eval-rands
+  (lambda (rands env)
+    (map (lambda (x) (eval-rand x env)) rands)))
+
+(define eval-rand
+  (lambda (rand env)
+    (eval-expressions rand rand env)))
+
+;;Funcion que crea la lista para los valores de las variables del mismo tamaño que la lista de variables
+(define build-list-nill (lambda (nlist value)
+                (let list-of-values ([count 0][lista empty])
+                                     (if (= count nlist)
+                                          lista
+                                          (list-of-values (+ count 1) (cons value lista))))))
+
+;------------------------------------------------------------------------------------------------------------------------------------
+;Ejecución:
+(Ruby-interpreter)
